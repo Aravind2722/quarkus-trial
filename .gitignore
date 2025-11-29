@@ -43,3 +43,24 @@ nb-configuration.xml
 /.quarkus/cli/plugins/
 # TLS Certificates
 .certs/
+
+# Container / local runtime data (MySQL, MinIO, Iceberg, Spark, Trino, etc.)
+# These directories are created/used by local containers and runtime processes
+mysql-data/
+minio-data/
+iceberg-data/
+warehouse/
+
+# Spark caches/checkpoints and ivy cache
+spark-checkpoints/
+spark-ivy-cache/
+
+# Trino/catalog or other local catalogs
+#trino/catalog/
+
+# Local generated artifacts and jars
+quarkus-trial-*.jar
+job.jar
+
+# Docker / compose generated files (optional)
+docker-compose.override.yml
