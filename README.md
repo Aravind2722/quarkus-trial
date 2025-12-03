@@ -60,3 +60,14 @@ If you want to learn more about building native executables, please consult <htt
 Easily start your REST Web Services
 
 [Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)
+
+
+
+Initial Steps:
+1. Run MySQL, create a debezium user with replication privileges.
+2. Make sure you have data in the table (Debezium will capture only changes from this table).
+3. Run Kafka and Kafka Connect with Debezium MySQL connector configured.
+4. Run other containers.
+
+
+Note: Follow above steps to prevent getting topic not found errors in spark application logs.

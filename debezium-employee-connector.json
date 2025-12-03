@@ -16,7 +16,7 @@
     "database.include.list": "quarkus_demo",
     "table.include.list": "quarkus_demo.Employee",
 
-    "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
     "schema.history.internal.kafka.topic": "schema-changes.quarkus",
 
     "snapshot.mode": "initial",

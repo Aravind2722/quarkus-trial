@@ -28,7 +28,11 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ./mysql-data:/var/lib/mysql
+      # CHANGED: Named Volume
+      - mysql-data:/var/lib/mysql
+#  CREATE USER 'debezium'@'%' IDENTIFIED BY 'dbz';
+#  GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'debezium'@'%';
+#  FLUSH PRIVILEGES;
 
   # -------------------------
   # Zookeeper
@@ -57,22 +61,25 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      # INTERNAL (29092): For Docker containers
+      # EXTERNAL (9092): For Host/Ngrok
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
 
-      # Listeners
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      # ⚠️ Update the EXTERNAL address below if your Ngrok port changes
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://0.tcp.in.ngrok.io:11423
 
-      # Single-node friendly factors
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
     volumes:
+      # CHANGED: Named Volume (Already was, but ensuring consistency)
       - kafka-data:/var/lib/kafka/data
 
-
   # -------------------------
-  # Schema Registry (for Avro)
+  # Schema Registry
   # -------------------------
   schema-registry:
     image: confluentinc/cp-schema-registry:7.4.0
@@ -84,10 +91,10 @@ services:
       - "8081:8081"
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:29092
 
   # -------------------------
-  # Kafka Connect with Debezium
+  # Kafka Connect
   # -------------------------
   kafka-connect:
     image: debezium/connect:2.5
@@ -100,31 +107,22 @@ services:
     ports:
       - "8083:8083"
     environment:
-      # Core Connect
-      BOOTSTRAP_SERVERS: kafka:9092
+      BOOTSTRAP_SERVERS: kafka:29092
       GROUP_ID: 1
       CONFIG_STORAGE_TOPIC: debezium_config
       OFFSET_STORAGE_TOPIC: debezium_offsets
       STATUS_STORAGE_TOPIC: debezium_status
-
-      # Single-node replication factors
       CONFIG_STORAGE_REPLICATION_FACTOR: 1
       OFFSET_STORAGE_REPLICATION_FACTOR: 1
       STATUS_STORAGE_REPLICATION_FACTOR: 1
-
-      # ✅ Use JSON converters instead of Avro
       KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
 
-
-
   # -------------------------
-  # Kafka UI (to inspect topics/connectors)
+  # Kafka UI
   # -------------------------
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -138,11 +136,12 @@ services:
       - "8089:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
 
-
+  # -------------------------
+  # MinIO (S3 Storage)
+  # -------------------------
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -154,7 +153,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./minio-data:/data
+      # CHANGED: Named Volume
+      - minio-data:/data
 
   minio-init:
     image: minio/mc
@@ -168,29 +168,11 @@ services:
       exit 0;
       "
 
-#  spark-cdc:
-#    image: apache/spark:3.5.6-java17
-#    container_name: spark-cdc
-#    depends_on:
-#      - kafka
-#      - iceberg-rest
-#    environment:
-#      - JAVA_TOOL_OPTIONS=-Daws.region=us-east-1
-#    volumes:
-#      - ../spark-cdc-job/target:/opt/spark-apps
-#      - ./spark-ivy-cache:/home/spark/.ivy2
-#    # Let spark-submit be the entrypoint directly
-#    entrypoint: ["/opt/spark/bin/spark-submit"]
-#    command:
-#      - "--master"
-#      - "local[1]"
-#      - "--packages"
-#      - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6"
-#      - "--class"
-#      - "com.salescode.spark.EmployeeCdcToIcebergJob"
-#      - "/opt/spark-apps/spark-cdc-job-1.0-SNAPSHOT.jar"
-
+  # -------------------------
+  # Spark CDC Job
+  # -------------------------
   spark-cdc:
+    user: root
     image: apache/spark:3.5.6-java17
     container_name: spark-cdc
     depends_on:
@@ -199,10 +181,12 @@ services:
     environment:
       - JAVA_TOOL_OPTIONS=-Daws.region=us-east-1
     volumes:
+      # KEEP: Bind mount for JARs (Code changes often)
       - ../spark-cdc-job/target:/opt/spark-apps
-      - ./spark-ivy-cache:/home/spark/.ivy2
-      # ADD THIS: Persist the checkpoints
-      - ./spark-checkpoints:/tmp/spark-checkpoints
+      # CHANGED: Named Volume for Cache
+      - spark-ivy-cache:/home/spark/.ivy2
+      # CHANGED: Named Volume for Checkpoints (Prevents "Ghost Data" issues)
+      - spark-checkpoints:/tmp/spark-checkpoints
     entrypoint: ["/opt/spark/bin/spark-submit"]
     command:
       - "--master"
@@ -213,41 +197,11 @@ services:
       - "com.salescode.spark.EmployeeCdcToIcebergJob"
       - "/opt/spark-apps/spark-cdc-job-1.0-SNAPSHOT.jar"
 
-
-#
-#  iceberg-rest:
-#    image: tabulario/iceberg-rest:latest
-#    container_name: iceberg-rest
-#    depends_on:
-#      - minio
-#    ports:
-#      - "8181:8181"
-#    environment:
-#      # Iceberg catalog config (JDBC catalog with S3FileIO on MinIO)
-#      - CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog
-#      - CATALOG_WAREHOUSE=s3://warehouse/
-#      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
-#
-#      # JDBC backing store (in-memory sqlite inside container)
-#      - CATALOG_JDBC__USER=user
-#      - CATALOG_JDBC__PASSWORD=password
-#      - CATALOG_JDBC__SCHEMA__VERSION=V1
-#      - CATALOG_URI=jdbc:sqlite:file:/tmp/iceberg_rest?mode=memory&cache=shared
-#
-#      # Point S3FileIO to MinIO (NOT real AWS S3)
-#      - CATALOG_S3_ENDPOINT=http://minio:9000
-#
-#      # ✅ FORCE PATH-STYLE so it uses "minio:9000/warehouse/..." instead of "warehouse.minio"
-#      # (double underscores → hyphen, so key becomes "s3.path-style-access")
-#      - CATALOG_S3_PATH__STYLE__ACCESS=true
-#
-#      # ✅ Use MinIO creds via AWS SDK env vars
-#      - AWS_REGION=us-east-1
-#      - AWS_ACCESS_KEY_ID=minioadmin
-#      - AWS_SECRET_ACCESS_KEY=minioadmin
-
-
+  # -------------------------
+  # Iceberg REST Catalog
+  # -------------------------
   iceberg-rest:
+    user: root
     image: tabulario/iceberg-rest:latest
     container_name: iceberg-rest
     depends_on:
@@ -255,25 +209,24 @@ services:
     ports:
       - "8181:8181"
     volumes:
-      # ADD THIS: Persist the SQLite DB file
-      - ./iceberg-data:/data/catalog
+      # CHANGED: Named Volume for the SQLite DB
+      - iceberg-data:/data/catalog
     environment:
       - CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog
       - CATALOG_WAREHOUSE=s3://warehouse/
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
-
-      # CHANGE THIS: Use a file-based DB instead of memory
       - CATALOG_URI=jdbc:sqlite:/data/catalog/iceberg_catalog.db
       - CATALOG_JDBC__USER=user
       - CATALOG_JDBC__PASSWORD=password
-
       - CATALOG_S3_ENDPOINT=http://minio:9000
       - CATALOG_S3_PATH__STYLE__ACCESS=true
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
 
-
+  # -------------------------
+  # Trino (Query Engine)
+  # -------------------------
   trino:
     image: trinodb/trino:432
     container_name: trino
@@ -283,8 +236,16 @@ services:
       - minio
       - iceberg-rest
     volumes:
+      # KEEP: Bind mount for Config (You edit these files)
       - ./trino/catalog:/etc/trino/catalog
 
-
+# -------------------------
+# Volume Definitions
+# -------------------------
 volumes:
   kafka-data:
+  mysql-data:
+  minio-data:
+  iceberg-data:
+  spark-checkpoints:
+  spark-ivy-cache:
